@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mapa Cooperativa</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  #panel {
+    background: #1a3a5c; color: white; padding: 10px 14px;
+    z-index: 1000; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  #panel h2 {
+    font-size: 14px; font-weight: 700; text-align: center;
+    letter-spacing: 1px; margin-bottom: 8px; text-transform: uppercase; color: #a8d8f0;
+  }
+  #buscador-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  #buscador {
+    flex: 1; padding: 7px 10px; border-radius: 8px; border: none;
+    font-size: 13px; background: #0d2540; color: white; outline: none;
+  }
+  #buscador::placeholder { color: #7aa5c8; }
+  .btn-nav {
+    background: #2a6496; color: white; border: none; border-radius: 8px;
+    width: 32px; height: 32px; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .btn-nav:active { background: #1e4f7a; }
+  #contador { font-size: 11px; color: #7aa5c8; min-width: 42px; text-align: center; flex-shrink: 0; }
+  #tarjeta { background: #0d2540; border-radius: 10px; padding: 8px 10px; display: none; }
+  #tarjeta.visible { display: block; }
+  .tarjeta-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .tarjeta-nombre { font-size: 14px; font-weight: 700; color: #fff; }
+  .tarjeta-id { font-size: 11px; color: #7aa5c8; }
+  .badge-estado { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px; text-transform: uppercase; }
+  .estado-normal { background: #1a7a3a; color: #a8f0c0; }
+  .estado-fuera { background: #7a1a1a; color: #f0a8a8; }
+  .estado-otro { background: #3a3a1a; color: #f0e8a8; }
+  .tarjeta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+  .dato { background: #142d47; border-radius: 6px; padding: 5px 7px; }
+  .dato-label { font-size: 9px; color: #7aa5c8; text-transform: uppercase; margin-bottom: 2px; }
+  .dato-valor { font-size: 12px; font-weight: 700; color: #fff; }
+  .obs-row { margin-top: 4px; background: #142d47; border-radius: 6px; padding: 5px 7px; }
+  .obs-row .dato-valor { font-size: 11px; font-weight: 400; color: #c8dff0; }
+  #mapa { flex: 1; z-index: 0; }
+  #loader {
+    position: fixed; inset: 0; background: #1a3a5c;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 9999; color: white; gap: 16px;
+  }
+  .spinner {
+    width: 40px; height: 40px; border: 4px solid #2a6496;
+    border-top-color: #a8d8f0; border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loader p { font-size: 14px; color: #a8d8f0; }
+  #sin-resultados { display: none; text-align: center; padding: 6px; font-size: 12px; color: #f0a8a8; }
+</style>
+</head>
+<body>
+
+<div id="loader">
+  <div class="spinner"></div>
+  <p>Cargando usuarios...</p>
+</div>
+
+<div id="panel">
+  <h2>⚡ Mapa de Usuarios</h2>
+  <div id="buscador-row">
+    <input type="text" id="buscador" placeholder="Buscar por nombre, ID o trafo..." autocomplete="off"/>
+    <button class="btn-nav" id="btn-prev">&#8592;</button>
+    <span id="contador">0 / 0</span>
+    <button class="btn-nav" id="btn-next">&#8594;</button>
+  </div>
+  <div id="sin-resultados">Sin resultados</div>
+  <div id="tarjeta">
+    <div class="tarjeta-header">
+      <div>
+        <div class="tarjeta-nombre" id="t-nombre">-</div>
+        <div class="tarjeta-id" id="t-id">-</div>
+      </div>
+      <span class="badge-estado" id="t-badge">-</span>
+    </div>
+    <div class="tarjeta-grid">
+      <div class="dato"><div class="dato-label">Potencia</div><div class="dato-valor" id="t-potencia">-</div></div>
+      <div class="dato"><div class="dato-label">Trafo</div><div class="dato-valor" id="t-trafo">-</div></div>
+      <div class="dato"><div class="dato-label">Estado</div><div class="dato-valor" id="t-estado">-</div></div>
+    </div>
+    <div class="obs-row">
+      <div class="dato-label">Observaciones</div>
+      <div class="dato-valor" id="t-obs">-</div>
+    </div>
+  </div>
+</div>
+
+<div id="mapa"></div>
+
+<script>
+// ── CONFIGURACIÓN ──────────────────────────────────────────────
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbznw7RXS2xS9otYWybZPfgKzCUkNLLpXL5L9jnEH2UrSujWr5vO8wzsHnR2INZEVmcUZw/exec";
+// ───────────────────────────────────────────────────────────────
+
+let usuarios = [], resultados = [], indice = 0, markers = {}, mapa;
+
+function colorEstado(e) {
+  const s = (e||'').toLowerCase();
+  if (s.includes('normal')) return '#1a9e3a';
+  if (s.includes('fuera') || s.includes('corte')) return '#cc2222';
+  return '#e8a020';
+}
+function badgeClass(e) {
+  const s = (e||'').toLowerCase();
+  if (s.includes('normal')) return 'estado-normal';
+  if (s.includes('fuera') || s.includes('corte')) return 'estado-fuera';
+  return 'estado-otro';
+}
+function icono(estado) {
+  const c = colorEstado(estado);
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;background:${c};border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
+    iconSize:[14,14], iconAnchor:[7,7], popupAnchor:[0,-9]
+  });
+}
+
+function mostrar(idx) {
+  if (!resultados.length) return;
+  indice = ((idx % resultados.length) + resultados.length) % resultados.length;
+  const u = resultados[indice];
+  document.getElementById('contador').textContent = `${indice+1} / ${resultados.length}`;
+  document.getElementById('t-nombre').textContent = u.usuario || '-';
+  document.getElementById('t-id').textContent = 'ID: ' + (u.id || '-');
+  document.getElementById('t-potencia').textContent = (u.potencia || '-') + ' kW';
+  document.getElementById('t-trafo').textContent = u.trafo || '-';
+  document.getElementById('t-estado').textContent = u.estado || '-';
+  document.getElementById('t-obs').textContent = u.observaciones || 'Sin observaciones';
+  const b = document.getElementById('t-badge');
+  b.textContent = u.estado || '-';
+  b.className = 'badge-estado ' + badgeClass(u.estado);
+  document.getElementById('tarjeta').classList.add('visible');
+  document.getElementById('sin-resultados').style.display = 'none';
+  const lat = parseFloat(u.latitud), lng = parseFloat(u.longitud);
+  if (!isNaN(lat) && !isNaN(lng)) {
+    mapa.flyTo([lat, lng], 16, {animate:true, duration:0.8});
+    if (markers[u.id]) markers[u.id].openPopup();
+  }
+}
+
+function filtrar(q) {
+  q = q.toLowerCase().trim();
+  resultados = q ? usuarios.filter(u =>
+    (u.usuario||'').toLowerCase().includes(q) ||
+    String(u.id).includes(q) ||
+    (u.trafo||'').toLowerCase().includes(q)
+  ) : [...usuarios];
+  if (resultados.length) {
+    document.getElementById('sin-resultados').style.display = 'none';
+    mostrar(0);
+  } else {
+    document.getElementById('tarjeta').classList.remove('visible');
+    document.getElementById('sin-resultados').style.display = 'block';
+    document.getElementById('contador').textContent = '0 / 0';
+  }
+}
+
+async function cargar() {
+  try {
+    const resp = await fetch(SCRIPT_URL);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    usuarios = await resp.json();
+    if (!Array.isArray(usuarios) || usuarios.length === 0) throw new Error('Lista vacía');
+
+    mapa = L.map('mapa');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution:'© OpenStreetMap', maxZoom:19
+    }).addTo(mapa);
+
+    const bounds = [];
+    usuarios.forEach(u => {
+      const lat = parseFloat(u.latitud), lng = parseFloat(u.longitud);
+      if (isNaN(lat)||isNaN(lng)) return;
+      bounds.push([lat,lng]);
+      const m = L.marker([lat,lng], {icon:icono(u.estado)}).addTo(mapa);
+      m.bindPopup(`<b>${u.usuario}</b><br>ID: ${u.id}<br>Trafo: ${u.trafo}<br>Potencia: ${u.potencia} kW<br>Estado: ${u.estado}`);
+      m.on('click', () => {
+        const i = resultados.findIndex(r => r.id === u.id);
+        if (i >= 0) mostrar(i);
+        else { resultados=[...usuarios]; document.getElementById('buscador').value=''; mostrar(resultados.findIndex(r=>r.id===u.id)); }
+      });
+      markers[u.id] = m;
+    });
+
+    if (bounds.length) mapa.fitBounds(bounds, {padding:[30,30]});
+    resultados = [...usuarios];
+    mostrar(0);
+    document.getElementById('loader').style.display = 'none';
+  } catch(err) {
+    document.getElementById('loader').innerHTML =
+      `<p style="color:#f0a8a8;text-align:center;padding:20px">
+        Error al cargar datos.<br><small>${err.message}</small>
+      </p>`;
+  }
+}
+
+document.getElementById('buscador').addEventListener('input', e => filtrar(e.target.value));
+document.getElementById('btn-next').addEventListener('click', () => mostrar(indice+1));
+document.getElementById('btn-prev').addEventListener('click', () => mostrar(indice-1));
+
+cargar();
+</script>
+</body>
+</html>
